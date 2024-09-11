@@ -1,6 +1,7 @@
 package gomap_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -15,7 +16,7 @@ func TestMain(m *testing.M) {
 	)
 
 	// results, err := gomap.ScanIP("192.168.1.1", proto, fastscan, stealth)
-	results, err := gomap.ScanRange(proto, fastscan, stealth)
+	results, err := gomap.ScanLocal(context.Background(), proto, fastscan, stealth)
 	if err != nil {
 		panic(err)
 	} else {
