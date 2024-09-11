@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"strings"
+	"net/netip"
 )
 
 func canSocketBind(laddr string) bool {
@@ -25,8 +25,8 @@ func canSocketBind(laddr string) bool {
 }
 
 // createHostRange converts a input ip addr string to a slice of ips on the cidr
-func createHostRange(netw string) []string {
-	_, ipv4Net, err := net.ParseCIDR(netw)
+func createHostRange(netw netip.Prefix) []string {
+	_, ipv4Net, err := net.ParseCIDR(netw.Masked().String())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func createHostRange(netw string) []string {
 	finish := (start & mask) | (mask ^ 0xffffffff)
 
 	var hosts []string
-	for i := start + 1; i <= finish-1; i++ {
+	for i := start; i <= finish; i++ {
 		ip := make(net.IP, 4)
 		binary.BigEndian.PutUint32(ip, i)
 		hosts = append(hosts, ip.String())
@@ -46,21 +46,22 @@ func createHostRange(netw string) []string {
 }
 
 // getLocalRange returns local ip range or defaults on error to most common
-func getLocalRange() string {
+func getLocalRange() netip.Prefix {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return "192.168.1.0/24"
+		return netip.MustParsePrefix("192.168.1.0/24")
 	}
+
 	for _, address := range addrs {
 		// check the address type and if it is not a loopback the display it
 		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				split := strings.Split(ipnet.IP.String(), ".")
-				return split[0] + "." + split[1] + "." + split[2] + ".0/24"
+			if v4 := ipnet.IP.To4(); v4 != nil {
+				netip.PrefixFrom(netip.AddrFrom4([4]byte{v4[0], v4[1], v4[2], v4[3]}), 24)
 			}
 		}
 	}
-	return "192.168.1.0/24"
+
+	return netip.MustParsePrefix("192.168.1.0/24")
 }
 
 // getLocalRange returns local ip range or defaults on error to most common

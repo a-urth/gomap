@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -13,17 +14,17 @@ import (
 // I am fairly happy with this code since its just iterating
 // over scanIPPorts. Most issues are deeper in the code.
 func scanIPRange(
-	ctx context.Context, laddr string, proto string, fastscan bool, stealth bool,
+	ctx context.Context, iprange netip.Prefix, laddr string, proto string, fastscan bool, stealth bool, ports ...int,
 ) (RangeScanResult, error) {
-	iprange := getLocalRange()
 	hosts := createHostRange(iprange)
 
 	var results RangeScanResult
 	for _, h := range hosts {
-		scan, err := scanIPPorts(ctx, h, laddr, proto, fastscan, stealth)
+		scan, err := scanIPPorts(ctx, h, laddr, proto, fastscan, stealth, ports...)
 		if err != nil {
 			continue
 		}
+
 		results = append(results, scan)
 	}
 
@@ -32,7 +33,7 @@ func scanIPRange(
 
 // scanIPPorts scans a list of ports on <hostname> <protocol>
 func scanIPPorts(
-	ctx context.Context, hostname string, laddr string, proto string, fastscan bool, stealth bool,
+	ctx context.Context, hostname string, laddr string, proto string, fastscan bool, stealth bool, ports ...int,
 ) (*IPScanResult, error) {
 	// checks if device is online
 	addr, err := net.LookupIP(hostname)
@@ -43,15 +44,28 @@ func scanIPPorts(
 	// This gets the device name. ('/etc/hostname')
 	// This is typically a good indication of if a host is 'up'
 	// but can cause false-negatives in certain situations.
-	// For this reason when in fastscan mode, devices without
-	// names are ignored but are fully scanned in slowmode.
 	hname, err := net.LookupAddr(hostname)
-	if fastscan {
-		if err != nil {
-			return nil, err
-		}
-	} else if err != nil {
+	if err != nil {
 		hname = append(hname, "Unknown")
+	}
+
+	depth := 4
+	list := make(map[int]string)
+
+	for _, p := range ports {
+		if svc, ok := detailedlist[p]; ok {
+			list[p] = svc
+		}
+	}
+
+	if len(list) == 0 {
+		if fastscan {
+			list = commonlist
+			depth = 8
+		} else {
+			list = detailedlist
+			depth = 16
+		}
 	}
 
 	// Start prepping channels and vars for worker pool
@@ -59,25 +73,14 @@ func scanIPPorts(
 	go func() {
 		defer close(in)
 
-		for i := 0; i <= 65535; i++ {
+		for p := range list {
 			select {
 			case <-ctx.Done():
 				return
-			case in <- i:
+			case in <- p:
 			}
 		}
 	}()
-
-	var list map[int]string
-	var depth int
-
-	if fastscan {
-		list = commonlist
-		depth = 50
-	} else {
-		list = detailedlist
-		depth = 500
-	}
 
 	tasks := len(list)
 
@@ -97,12 +100,12 @@ func scanIPPorts(
 					return
 				}
 
-				if service, ok := list[port]; ok {
-					if stealth {
-						scanPortSyn(resultChannel, proto, hostname, service, port, laddr)
-					} else {
-						scanPort(resultChannel, proto, hostname, service, port)
-					}
+				service := list[port]
+
+				if stealth {
+					scanPortSyn(resultChannel, proto, hostname, service, port, laddr)
+				} else {
+					scanPort(resultChannel, proto, hostname, service, port)
 				}
 			}
 
@@ -116,7 +119,12 @@ func scanIPPorts(
 	}
 
 	var results []portResult
+
+	var wgResult sync.WaitGroup
+
+	wgResult.Add(1)
 	go func() {
+		defer wgResult.Done()
 		// Combines all results from resultChannel and return a IPScanResult
 		for result := range resultChannel {
 			results = append(results, result)
@@ -127,6 +135,8 @@ func scanIPPorts(
 	wg.Wait()
 
 	close(resultChannel)
+
+	wgResult.Wait()
 
 	return &IPScanResult{
 		Hostname: hname[0],
@@ -141,6 +151,7 @@ func scanIPPorts(
 func scanPort(resultChannel chan<- portResult, protocol, hostname, service string, port int) {
 	result := portResult{Port: port, Service: service}
 	address := hostname + ":" + strconv.Itoa(port)
+
 	conn, err := net.DialTimeout(protocol, address, 3*time.Second)
 	if err != nil {
 		result.State = false
@@ -149,6 +160,7 @@ func scanPort(resultChannel chan<- portResult, protocol, hostname, service strin
 	}
 
 	defer conn.Close()
+
 	result.State = true
 	resultChannel <- result
 }

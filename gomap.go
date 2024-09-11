@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 )
 
 // IPScanResult contains the results of a scan on a single ip
@@ -61,7 +62,7 @@ func ScanIP(hostname string, proto string, fastscan bool, stealth bool) (*IPScan
 
 // ScanIPCtx scans a single IP for open ports
 func ScanIPCtx(
-	ctx context.Context, hostname string, proto string, fastscan bool, stealth bool,
+	ctx context.Context, hostname string, proto string, fastscan bool, stealth bool, ports ...int,
 ) (*IPScanResult, error) {
 	laddr, err := getLocalIP()
 	if err != nil {
@@ -74,17 +75,17 @@ func ScanIPCtx(
 		}
 	}
 
-	return scanIPPorts(ctx, hostname, laddr, proto, fastscan, stealth)
+	return scanIPPorts(ctx, hostname, laddr, proto, fastscan, stealth, ports...)
 }
 
 // ScanRange scans every address on a CIDR for open ports
-func ScanRange(proto string, fastscan bool, stealth bool) (RangeScanResult, error) {
-	return ScanRangeCtx(context.Background(), proto, fastscan, stealth)
+func ScanRange(prefix netip.Prefix, proto string, fastscan bool, stealth bool) (RangeScanResult, error) {
+	return ScanRangeCtx(context.Background(), prefix, proto, fastscan, stealth)
 }
 
 // ScanRangeCtx scans every address on a CIDR for open ports
 func ScanRangeCtx(
-	ctx context.Context, proto string, fastscan bool, stealth bool,
+	ctx context.Context, prefix netip.Prefix, proto string, fastscan bool, stealth bool, ports ...int,
 ) (RangeScanResult, error) {
 	laddr, err := getLocalIP()
 	if err != nil {
@@ -96,7 +97,12 @@ func ScanRangeCtx(
 			return nil, fmt.Errorf("socket: operation not permitted")
 		}
 	}
-	return scanIPRange(ctx, laddr, proto, fastscan, stealth)
+
+	return scanIPRange(ctx, prefix, laddr, proto, fastscan, stealth, ports...)
+}
+
+func ScanLocal(ctx context.Context, proto string, fastscan bool, stealth bool, ports ...int) (RangeScanResult, error) {
+	return ScanRangeCtx(ctx, getLocalRange(), proto, fastscan, stealth, ports...)
 }
 
 // String with the results of a single scanned IP
