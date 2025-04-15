@@ -55,6 +55,8 @@ func scanIPPorts(
 	for _, p := range ports {
 		if svc, ok := detailedlist[p]; ok {
 			list[p] = svc
+		} else {
+			list[p] = "unknown"
 		}
 	}
 
